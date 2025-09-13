@@ -7,20 +7,20 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { config } from 'dotenv';
 import { createQdrantService } from './services/qdrant.js';
 import { createEmbeddingService } from './services/embeddings/index.js';
 import { TextProcessor } from './services/text-processing.js';
 import { v4 as uuidv4 } from 'uuid';
-import { readFileSync } from 'fs';
-
-// Load environment variables
-config();
+import { promises as fsPromises } from 'fs';
+import path from 'path';
+import appConfig from './config.js';
+import logger from './logger.js';
+import { EmbeddingService } from './types.js';
 
 interface AddDocumentsArgs {
   filePath: string;
   collection: string;
-  embeddingService: 'openai' | 'openrouter' | 'fastembed' | 'ollama';
+  embeddingService?: 'openai' | 'openrouter' | 'fastembed' | 'ollama';
   chunkSize?: number;
   chunkOverlap?: number;
 }
@@ -28,7 +28,7 @@ interface AddDocumentsArgs {
 interface SearchArgs {
   query: string;
   collection: string;
-  embeddingService: 'openai' | 'openrouter' | 'fastembed' | 'ollama';
+  embeddingService?: 'openai' | 'openrouter' | 'fastembed' | 'ollama';
   limit?: number;
 }
 
@@ -40,6 +40,7 @@ class BetterQdrantServer {
   private server: Server;
   private qdrantService;
   private textProcessor;
+
 
   constructor() {
     this.server = new Server(
@@ -56,19 +57,30 @@ class BetterQdrantServer {
 
     // Initialize services
     this.qdrantService = createQdrantService(
-      process.env.QDRANT_URL || 'http://localhost:6333',
-      process.env.QDRANT_API_KEY
+      appConfig.qdrantUrl,
+      appConfig.qdrantApiKey
     );
     this.textProcessor = new TextProcessor();
 
     this.setupToolHandlers();
     
     // Error handling
-    this.server.onerror = (error) => console.error('[MCP Error]', error);
+    this.server.onerror = (error) => logger.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
       await this.server.close();
       process.exit(0);
     });
+  }
+
+  private sanitizeFilePath(unsafePath: string): string {
+    const BASE_UPLOAD_DIR = appConfig.mcpUploadDir;
+    const resolvedPath = path.resolve(BASE_UPLOAD_DIR, unsafePath);
+
+    // Ensure the resolved path is still within the base upload directory
+    if (!resolvedPath.startsWith(BASE_UPLOAD_DIR)) {
+      throw new McpError(ErrorCode.InvalidParams, 'File path attempts to access forbidden directory.');
+    }
+    return resolvedPath;
   }
 
   private isAddDocumentsArgs(args: unknown): args is AddDocumentsArgs {
@@ -77,8 +89,7 @@ class BetterQdrantServer {
     return (
       typeof a.filePath === 'string' &&
       typeof a.collection === 'string' &&
-      typeof a.embeddingService === 'string' &&
-      ['openai', 'openrouter', 'fastembed', 'ollama'].includes(a.embeddingService) &&
+      (a.embeddingService === undefined || (typeof a.embeddingService === 'string' && ['openai', 'openrouter', 'fastembed', 'ollama'].includes(a.embeddingService))) &&
       (a.chunkSize === undefined || typeof a.chunkSize === 'number') &&
       (a.chunkOverlap === undefined || typeof a.chunkOverlap === 'number')
     );
@@ -90,8 +101,7 @@ class BetterQdrantServer {
     return (
       typeof a.query === 'string' &&
       typeof a.collection === 'string' &&
-      typeof a.embeddingService === 'string' &&
-      ['openai', 'openrouter', 'fastembed', 'ollama'].includes(a.embeddingService) &&
+      (a.embeddingService === undefined || (typeof a.embeddingService === 'string' && ['openai', 'openrouter', 'fastembed', 'ollama'].includes(a.embeddingService))) &&
       (a.limit === undefined || typeof a.limit === 'number')
     );
   }
@@ -131,7 +141,7 @@ class BetterQdrantServer {
               embeddingService: {
                 type: 'string',
                 enum: ['openai', 'openrouter', 'fastembed', 'ollama'],
-                description: 'Embedding service to use',
+                description: 'Embedding service to use (optional)',
               },
               chunkSize: {
                 type: 'number',
@@ -141,8 +151,12 @@ class BetterQdrantServer {
                 type: 'number',
                 description: 'Overlap between chunks (optional)',
               },
+              model: {
+                type: 'string',
+                description: 'Specific model to use for embedding (optional)',
+              },
             },
-            required: ['filePath', 'collection', 'embeddingService'],
+            required: ['filePath', 'collection'],
           },
         },
         {
@@ -162,14 +176,18 @@ class BetterQdrantServer {
               embeddingService: {
                 type: 'string',
                 enum: ['openai', 'openrouter', 'fastembed', 'ollama'],
-                description: 'Embedding service to use',
+                description: 'Embedding service to use (optional)',
               },
               limit: {
                 type: 'number',
                 description: 'Maximum number of results to return (optional)',
               },
+              model: {
+                type: 'string',
+                description: 'Specific model to use for embedding (optional)',
+              },
             },
-            required: ['query', 'collection', 'embeddingService'],
+            required: ['query', 'collection'],
           },
         },
         {
@@ -229,20 +247,12 @@ class BetterQdrantServer {
         ],
       };
     } catch (error) {
-      console.error('Error in handleListCollections:', error);
-      
-      let errorDetails = '';
-      if (error instanceof Error) {
-        errorDetails = `${error.name}: ${error.message}\nStack: ${error.stack}`;
-      } else {
-        errorDetails = String(error);
-      }
-      
+      logger.error('Error in handleListCollections:', error);
       return {
         content: [
           {
             type: 'text',
-            text: `Error listing collections: ${errorDetails}`,
+            text: 'Error listing collections. Please check server logs for details.',
           },
         ],
         isError: true,
@@ -261,14 +271,32 @@ class BetterQdrantServer {
       }
 
       // Read and process the file
-      const content = readFileSync(args.filePath, 'utf-8');
-      const chunks = await this.textProcessor.processFile(content, args.filePath);
+      let content: string;
+      let sanitizedFilePath: string;
+      try {
+        sanitizedFilePath = this.sanitizeFilePath(args.filePath);
+        content = await fsPromises.readFile(sanitizedFilePath, 'utf-8');
+      } catch (error) {
+        if (error instanceof McpError) {
+          throw error;
+        }
+        throw new McpError(ErrorCode.InvalidParams, `Error reading file: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const chunks = await this.textProcessor.processFile(content, sanitizedFilePath);
 
-      // Create embedding service
+      const embeddingServiceType = appConfig.embeddingProvider || args.embeddingService;
+      if (!embeddingServiceType) {
+        throw new McpError(ErrorCode.InvalidParams, 'Embedding service not specified in config or arguments.');
+      }
+      const allowedEmbeddingServices: EmbeddingService[] = ['openai', 'openrouter', 'fastembed', 'ollama'];
+      if (!allowedEmbeddingServices.includes(embeddingServiceType as EmbeddingService)) {
+        throw new McpError(ErrorCode.InvalidParams, `Unsupported embedding service: ${embeddingServiceType}. Allowed services are: ${allowedEmbeddingServices.join(', ')}`);
+      }
       const embeddingService = createEmbeddingService({
-        type: args.embeddingService,
-        apiKey: process.env[`${args.embeddingService.toUpperCase()}_API_KEY`],
-        endpoint: process.env[`${args.embeddingService.toUpperCase()}_ENDPOINT`],
+        type: embeddingServiceType as EmbeddingService,
+        apiKey: (appConfig as any)[`${embeddingServiceType}ApiKey`],
+        endpoint: (appConfig as any)[`${embeddingServiceType}Endpoint`],
+        model: appConfig.embeddingModel,
       });
 
       // Generate embeddings
@@ -304,12 +332,12 @@ class BetterQdrantServer {
         ],
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Error in handleAddDocuments:', error);
       return {
         content: [
           {
             type: 'text',
-            text: `Error adding documents: ${errorMessage}`,
+            text: 'Error adding documents. Please check server logs for details.',
           },
         ],
         isError: true,
@@ -319,11 +347,20 @@ class BetterQdrantServer {
 
   private async handleSearch(args: SearchArgs) {
     try {
-      // Create embedding service
+
+      const embeddingServiceType = appConfig.embeddingProvider || args.embeddingService;
+      if (!embeddingServiceType) {
+        throw new McpError(ErrorCode.InvalidParams, 'Embedding service not specified in config or arguments.');
+      }
+      const allowedEmbeddingServices: EmbeddingService[] = ['openai', 'openrouter', 'fastembed', 'ollama'];
+      if (!allowedEmbeddingServices.includes(embeddingServiceType as EmbeddingService)) {
+        throw new McpError(ErrorCode.InvalidParams, `Unsupported embedding service: ${embeddingServiceType}. Allowed services are: ${allowedEmbeddingServices.join(', ')}`);
+      }
       const embeddingService = createEmbeddingService({
-        type: args.embeddingService,
-        apiKey: process.env[`${args.embeddingService.toUpperCase()}_API_KEY`],
-        endpoint: process.env[`${args.embeddingService.toUpperCase()}_ENDPOINT`],
+        type: embeddingServiceType as EmbeddingService,
+        apiKey: (appConfig as any)[`${embeddingServiceType}ApiKey`],
+        endpoint: (appConfig as any)[`${embeddingServiceType}Endpoint`],
+        model: appConfig.embeddingModel,
       });
 
       // Generate query embedding
@@ -366,12 +403,12 @@ class BetterQdrantServer {
         ],
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Error in handleSearch:', error);
       return {
         content: [
           {
             type: 'text',
-            text: `Error searching: ${errorMessage}`,
+            text: 'Error searching. Please check server logs for details.',
           },
         ],
         isError: true,
@@ -393,12 +430,12 @@ class BetterQdrantServer {
         ],
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Error in handleDeleteCollection:', error);
       return {
         content: [
           {
             type: 'text',
-            text: `Error deleting collection: ${errorMessage}`,
+            text: 'Error deleting collection. Please check server logs for details.',
           },
         ],
         isError: true,
@@ -409,12 +446,12 @@ class BetterQdrantServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('Better Qdrant MCP server running on stdio');
+    logger.info('Better Qdrant MCP server running on stdio');
   }
 }
 
 const server = new BetterQdrantServer();
 server.run().catch((error) => {
-  console.error('Server error:', error instanceof Error ? error.message : String(error));
+  logger.error('Server error:', error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

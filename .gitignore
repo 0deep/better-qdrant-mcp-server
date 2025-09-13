@@ -55,3 +55,7 @@ coverage/
 
 # Yarn Integrity file
 .yarn-integrity
+
+.pnpm-store
+.geminiignore
+.devcontainer

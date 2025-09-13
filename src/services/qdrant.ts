@@ -1,6 +1,6 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { QdrantService, SearchResult } from '../types.js';
-import fetch from 'node-fetch';
+import logger from '../logger.js';
 
 export class DefaultQdrantService implements QdrantService {
   private url: string;
@@ -13,11 +13,11 @@ export class DefaultQdrantService implements QdrantService {
 
   async listCollections(): Promise<string[]> {
     try {
-      console.log('Attempting to connect to Qdrant server using direct fetch...');
+      logger.debug('Attempting to connect to Qdrant server using direct fetch...');
       
       // Use direct fetch instead of the client
       const collectionsUrl = `${this.url}/collections`;
-      console.log(`Fetching from: ${collectionsUrl}`);
+      logger.debug(`Fetching from: ${collectionsUrl}`);
       
       const response = await fetch(collectionsUrl, {
         method: 'GET',
@@ -38,14 +38,14 @@ export class DefaultQdrantService implements QdrantService {
           collections: Array<{ name: string }> 
         } 
       };
-      console.log('Successfully retrieved collections:', data);
+      logger.info('Successfully retrieved collections:', data);
       
       return data.result.collections.map(c => c.name);
     } catch (error) {
-      console.error('Error in listCollections:', error);
+      logger.error('Error in listCollections:', error);
       if (error instanceof Error) {
-        console.error(`${error.name}: ${error.message}`);
-        console.error('Stack:', error.stack);
+        logger.error(`${error.name}: ${error.message}`);
+        logger.error('Stack:', error.stack);
       }
       throw error;
     }
@@ -53,11 +53,11 @@ export class DefaultQdrantService implements QdrantService {
 
   async createCollection(name: string, vectorSize: number): Promise<void> {
     try {
-      console.log('Attempting to create Qdrant collection using direct fetch...');
+      logger.debug('Attempting to create Qdrant collection using direct fetch...');
       
       // Use direct fetch instead of the client
       const createUrl = `${this.url}/collections/${name}`;
-      console.log(`Fetching from: ${createUrl}`);
+      logger.debug(`Fetching from: ${createUrl}`);
       
       const response = await fetch(createUrl, {
         method: 'PUT',
@@ -80,12 +80,12 @@ export class DefaultQdrantService implements QdrantService {
       }
       
       const data = await response.json();
-      console.log('Successfully created collection:', data);
+      logger.info('Successfully created collection:', data);
     } catch (error) {
-      console.error('Error in createCollection:', error);
+      logger.error('Error in createCollection:', error);
       if (error instanceof Error) {
-        console.error(`${error.name}: ${error.message}`);
-        console.error('Stack:', error.stack);
+        logger.error(`${error.name}: ${error.message}`);
+        logger.error('Stack:', error.stack);
       }
       throw error;
     }
@@ -96,11 +96,11 @@ export class DefaultQdrantService implements QdrantService {
     documents: { id: string; vector: number[]; payload: Record<string, any> }[]
   ): Promise<void> {
     try {
-      console.log('Attempting to add documents to Qdrant collection using direct fetch...');
+      logger.debug('Attempting to add documents to Qdrant collection using direct fetch...');
       
       // Use direct fetch instead of the client
       const upsertUrl = `${this.url}/collections/${collection}/points`;
-      console.log(`Fetching from: ${upsertUrl}`);
+      logger.debug(`Fetching from: ${upsertUrl}`);
       
       const points = documents.map(doc => ({
         id: doc.id,
@@ -126,12 +126,12 @@ export class DefaultQdrantService implements QdrantService {
       }
       
       const data = await response.json();
-      console.log('Successfully added documents:', data);
+      logger.info('Successfully added documents:', data);
     } catch (error) {
-      console.error('Error in addDocuments:', error);
+      logger.error('Error in addDocuments:', error);
       if (error instanceof Error) {
-        console.error(`${error.name}: ${error.message}`);
-        console.error('Stack:', error.stack);
+        logger.error(`${error.name}: ${error.message}`);
+        logger.error('Stack:', error.stack);
       }
       throw error;
     }
@@ -139,11 +139,11 @@ export class DefaultQdrantService implements QdrantService {
 
   async deleteCollection(name: string): Promise<void> {
     try {
-      console.log('Attempting to delete Qdrant collection using direct fetch...');
+      logger.debug('Attempting to delete Qdrant collection using direct fetch...');
       
       // Use direct fetch instead of the client
       const deleteUrl = `${this.url}/collections/${name}`;
-      console.log(`Fetching from: ${deleteUrl}`);
+      logger.debug(`Fetching from: ${deleteUrl}`);
       
       const response = await fetch(deleteUrl, {
         method: 'DELETE',
@@ -160,12 +160,12 @@ export class DefaultQdrantService implements QdrantService {
       }
       
       const data = await response.json();
-      console.log('Successfully deleted collection:', data);
+      logger.info('Successfully deleted collection:', data);
     } catch (error) {
-      console.error('Error in deleteCollection:', error);
+      logger.error('Error in deleteCollection:', error);
       if (error instanceof Error) {
-        console.error(`${error.name}: ${error.message}`);
-        console.error('Stack:', error.stack);
+        logger.error(`${error.name}: ${error.message}`);
+        logger.error('Stack:', error.stack);
       }
       throw error;
     }
@@ -177,11 +177,11 @@ export class DefaultQdrantService implements QdrantService {
     limit: number = 10
   ): Promise<SearchResult[]> {
     try {
-      console.log('Attempting to search Qdrant collection using direct fetch...');
+      logger.debug('Attempting to search Qdrant collection using direct fetch...');
       
       // Use direct fetch instead of the client
       const searchUrl = `${this.url}/collections/${collection}/points/search`;
-      console.log(`Fetching from: ${searchUrl}`);
+      logger.debug(`Fetching from: ${searchUrl}`);
       
       const response = await fetch(searchUrl, {
         method: 'POST',
@@ -212,7 +212,7 @@ export class DefaultQdrantService implements QdrantService {
         }> 
       };
       
-      console.log('Successfully retrieved search results:', data);
+      logger.info('Successfully retrieved search results:', data);
       
       return data.result.map(result => {
         const searchResult: SearchResult = {
@@ -229,10 +229,10 @@ export class DefaultQdrantService implements QdrantService {
         return searchResult;
       });
     } catch (error) {
-      console.error('Error in search:', error);
+      logger.error('Error in search:', error);
       if (error instanceof Error) {
-        console.error(`${error.name}: ${error.message}`);
-        console.error('Stack:', error.stack);
+        logger.error(`${error.name}: ${error.message}`);
+        logger.error('Stack:', error.stack);
       }
       throw error;
     }
@@ -242,6 +242,24 @@ export class DefaultQdrantService implements QdrantService {
 export function createQdrantService(url: string, apiKey?: string): QdrantService {
   // Parse the URL to handle port correctly
   const urlObj = new URL(url);
+  logger.debug(`createQdrantService - URL: ${url}, Hostname: ${urlObj.hostname}, Protocol: ${urlObj.protocol}`);
+
+  // Security Check: Handle API key usage based on connection type
+  const isLocalhost = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1' || urlObj.hostname === 'host.container.internal'; // Added host.docker.internal for common Docker setups
+  logger.debug(`createQdrantService - isLocalhost: ${isLocalhost}`);
+
+  if (apiKey) {
+    if (urlObj.protocol !== 'https:') {
+      if (!isLocalhost) {
+        // CRITICAL: API key over HTTP for non-local connection
+        logger.error('CRITICAL SECURITY ALERT: QDRANT_API_KEY is provided but QDRANT_URL is not HTTPS for a non-local connection. This exposes your API key to eavesdropping. Please use an HTTPS URL (e.g., "https://your-qdrant-host") or remove the API key if using an unsecure connection.');
+        throw new Error('Insecure Qdrant API key usage detected for non-local connection. Server will not start.');
+      } else {
+        // WARNING: API key over HTTP for local connection (not strictly necessary, but good to flag)
+        logger.warn('WARNING: QDRANT_API_KEY is provided for a local HTTP Qdrant connection. Qdrant typically does not require an API key for local connections. Consider removing the API key or using HTTPS for consistency.');
+      }
+    }
+  }
   
   // Create client with explicit host and port if provided
   const clientConfig: any = {
@@ -261,8 +279,10 @@ export function createQdrantService(url: string, apiKey?: string): QdrantService
     clientConfig.prefix = urlObj.pathname;
   }
   
-  console.log('Creating Qdrant client with config:', clientConfig);
+  logger.info('Creating Qdrant client with config:', clientConfig);
   const client = new QdrantClient(clientConfig);
 
   return new DefaultQdrantService(client, url, apiKey);
+
+
 }
